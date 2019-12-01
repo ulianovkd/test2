@@ -1,9 +1,10 @@
+import os
+import shutil
+
+import requests
 from flask import Flask
 from flask_restful import Api, Resource, reqparse
 from pymongo import MongoClient
-import os
-import shutil
-import requests
 
 app = Flask(__name__)
 api = Api(app)
@@ -17,12 +18,15 @@ search_url = 'https://api.cognitive.microsoft.com/bing/v7.0/images/search'
 headers = {'Ocp-Apim-Subscription-Key': subscription_key}
 
 TRAIN_TEST_RATIO = 0.8  # Соотношение train и test выборок
+ACCEPTABLE_SIZE_DIFFERENCE = 1024  # Байт
 
 
 class Dataset(Resource):
-    # Поиск датасета по названию в Bing
-    # Загрузка изображений и сохранение информации в MongoDB
     def put(self):
+        """
+        Поиск датасета по названию в Bing
+        Загрузка изображений и сохранение информации в MongoDB
+        """
         # Парсим запрос
         parser = reqparse.RequestParser()
         parser.add_argument('dataset_name', required=True)
@@ -31,7 +35,7 @@ class Dataset(Resource):
         dataset_name = params['dataset_name']
         dataset_size = params['dataset_size']
 
-        # Если уже есть папка датасета
+        # Если уже есть папка датасета - удаляем
         if os.path.exists(dataset_name):
             shutil.rmtree(dataset_name)
         # Создаем папку датасета
@@ -77,9 +81,10 @@ class Dataset(Resource):
                     with open(path, 'wb') as file:
                         response.raw.decode_content = True
                         shutil.copyfileobj(response.raw, file)
-                    # Исключение если файл пустой
-                    if os.path.getsize(path) == 0:
-                        raise Exception('File is empty!')
+                    # Исключение если размер файла не совпадает с полученным от Bing
+                    bing_size = int(img['contentSize'][:-2])
+                    if abs(os.path.getsize(path) - bing_size) > ACCEPTABLE_SIZE_DIFFERENCE:
+                        raise Exception('File size does not match!')
                     # Сохраняем в БД
                     document = {'url': img['contentUrl'],
                                 'path': path}
@@ -92,9 +97,11 @@ class Dataset(Resource):
         # Когда получено необходимое количество изображений
         return {'info': 'Dataset collected'}, 201
 
-    # Просмотр сохраненного датасета
-    # Возвращает train и test выборки (соотношение 80:20)
     def get(self):
+        """
+        Просмотр сохраненного датасета
+        Возвращает train и test выборки (соотношение 80:20)
+        """
         # Парсим запрос
         parser = reqparse.RequestParser()
         parser.add_argument('dataset_name', required=True)
@@ -116,8 +123,10 @@ class Dataset(Resource):
         # Возвращаем train и test
         return {'train': train, 'test': test}, 200
 
-    # Удаление изображения из датасета по URL
     def delete(self):
+        """
+        Удаление изображения из датасета по URL
+        """
         # Парсим запрос
         parser = reqparse.RequestParser()
         parser.add_argument('dataset_name', required=True)
